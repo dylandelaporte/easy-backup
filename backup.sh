@@ -3,6 +3,7 @@
 #INPUT
 DIRECTORY_TO_BACKUP=
 S3CMD_CONFIG=
+BUCKET_NAME=
 
 if [[ $# -lt 1 ]]
 then
@@ -22,6 +23,11 @@ case $key in
     ;;
     --s3cmd-config)
     S3CMD_CONFIG="${2}"
+    shift
+    shift
+    ;;
+    --bucket-name)
+    BUCKET_NAME="${2}"
     shift
     shift
     ;;
@@ -47,6 +53,12 @@ fi
 if [ -z "${S3CMD_CONFIG}" ]
 then
 	echo "Missing s3cmd config, please use ${0} --help"
+	exit 1
+fi
+
+if [ -z "${BUCKET_NAME}" ]
+then
+	echo "Missing bucket name, please use ${0} --help"
 	exit 1
 fi
 
@@ -91,7 +103,7 @@ done
 #CHECK BACKUP
 echo "== Checking for an existing backup"
 
-EXISTS_BACKUP_DIRECTORY=$(s3cmd ls -c ${S3CMD_CONFIG} s3://dyser-data 2>/dev/null | grep ${HASH_PATH})
+EXISTS_BACKUP_DIRECTORY=$(s3cmd ls -c ${S3CMD_CONFIG} s3://${BUCKET_NAME} 2>/dev/null | grep ${HASH_PATH})
 EXISTING_FILES=
 
 if [ -z "${EXISTS_BACKUP_DIRECTORY}" ]
@@ -99,7 +111,7 @@ then
 	echo "- it's the first backup!"
 else
 	echo "== Listing existing files in the backup"
-	s3cmd ls -c ${S3CMD_CONFIG} s3://dyser-data/${HASH_PATH}/ 2>/dev/null > tmp/existing_files.list
+	s3cmd ls -c ${S3CMD_CONFIG} s3://${BUCKET_NAME}/${HASH_PATH}/ 2>/dev/null > tmp/existing_files.list
 
 	echo "== Deleting older files in the backup"
 	
@@ -128,7 +140,7 @@ do
 	then
 		file_path=$(echo "${line}" | cut -d"|" -f2)
 		openssl enc -aes-256-cbc -salt -pbkdf2 -a -kfile password -in ${file_path} -out "tmp/${file_name}"
-		s3cmd put -c ${S3CMD_CONFIG} --storage-class GLACIER tmp/${file_name} s3://dyser-data/${HASH_PATH}/${file_name} 2>/dev/null
+		s3cmd put -c ${S3CMD_CONFIG} --storage-class GLACIER tmp/${file_name} s3://${BUCKET_NAME}/${HASH_PATH}/${file_name} 2>/dev/null
 		rm tmp/${file_name}
 	fi
 done
@@ -136,7 +148,7 @@ done
 #encrypt file.list
 openssl enc -aes-256-cbc -salt -pbkdf2 -a -kfile password -in tmp/files.list -out tmp/files.list.enc
 
-#update file.list
-s3cmd put -c ${S3CMD_CONFIG} tmp/files.list.enc s3://dyser-data/${HASH_PATH}/files.list.enc 2>/dev/null
+#upload file.list
+s3cmd put -c ${S3CMD_CONFIG} tmp/files.list.enc s3://${BUCKET_NAME}/${HASH_PATH}/files.list.enc 2>/dev/null
 
 echo "Done!"

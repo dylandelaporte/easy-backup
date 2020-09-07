@@ -3,6 +3,7 @@
 #INPUT
 DIRECTORY_TO_BACKUP=
 S3CMD_CONFIG=
+BUCKET_NAME=
 
 if [[ $# -lt 1 ]]
 then
@@ -22,6 +23,11 @@ case $key in
     ;;
     --s3cmd-config)
     S3CMD_CONFIG="${2}"
+    shift
+    shift
+    ;;
+    --bucket-name)
+    BUCKET_NAME="${2}"
     shift
     shift
     ;;
@@ -50,6 +56,11 @@ then
 	exit 1
 fi
 
+if [ -z "${BUCKET_NAME}" ]
+then
+	echo "Missing bucket name, please use ${0} --help"
+fi
+
 #INIT DATA
 echo "== Initialisating data"
 
@@ -60,13 +71,13 @@ echo "- Hash path: ${HASH_PATH}"
 #CHECK BACKUP
 echo "== Checking for an existing backup"
 
-EXISTS_BACKUP_DIRECTORY=$(s3cmd ls -c ${S3CMD_CONFIG} s3://dyser-data 2>/dev/null | grep ${HASH_PATH})
+EXISTS_BACKUP_DIRECTORY=$(s3cmd ls -c ${S3CMD_CONFIG} s3://${BUCKET_NAME} 2>/dev/null | grep ${HASH_PATH})
 
 if [ -z "${EXISTS_BACKUP_DIRECTORY}" ]
 then
 	echo "- there backup does not exists, please check the path."
 else
 	echo "== Deleting files of the backup"
-	s3cmd rm -c ${S3CMD_CONFIG} -r s3://dyser-data/${HASH_PATH} 2>/dev/null
+	s3cmd rm -c ${S3CMD_CONFIG} -r s3://${BUCKET_NAME}/${HASH_PATH} 2>/dev/null
 
 fi
