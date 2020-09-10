@@ -1,6 +1,7 @@
 #!/bin/bash
 
 #INPUT
+BACKUP_NAME=
 DIRECTORY_TO_BACKUP=
 S3CMD_CONFIG=
 BUCKET_NAME=
@@ -16,6 +17,11 @@ do
 key="$1"
 
 case $key in
+    --backup-name)
+    BACKUP_NAME="${2}"
+    shift
+    shift
+    ;;
     --directory-to-backup)
     DIRECTORY_TO_BACKUP="${2}"
     shift
@@ -44,6 +50,12 @@ case $key in
 esac
 done
 
+if [ -z "${BACKUP_NAME}" ]
+then
+	echo "Missing backup name, please use ${0} --help"
+	exit 1
+fi
+
 if [ -z "${DIRECTORY_TO_BACKUP}" ]
 then
 	echo "Missing directory to backup, please use ${0} --help"
@@ -65,7 +77,7 @@ fi
 #INIT DATA
 echo "== Initialisating data"
 
-HASH_PATH=$(echo "${DIRECTORY_TO_BACKUP}" | /usr/bin/openssl sha1 | /usr/bin/awk '{print $2;}')
+HASH_PATH=$(echo "${BACKUP_NAME}" | /usr/bin/openssl sha1 | /usr/bin/awk '{print $2;}')
 FILES=$(/usr/bin/find "${DIRECTORY_TO_BACKUP}" -type f -exec /bin/ls -l --full-time {} \;)
 COUNT_FILES=$(echo "${FILES}" | wc -l)
 
