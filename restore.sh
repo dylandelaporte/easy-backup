@@ -39,8 +39,10 @@ case $key in
     ;;
     --help)
     echo "$0"
-    echo " --directory-to-backup DIRECTORY_TO_BACKUP"
-    echo " --s3-cmd S3CMD_CONFIG"
+    echo " --backup-name BACKUP_NAME"
+    echo " --restore-to-directory RESTORE_TO_DIRECTORY"
+    echo " --s3cmd-config S3CMD_CONFIG"
+    echo " --bucket-name BUCKET_NAME"
     exit 0
     ;;
     *)
@@ -74,93 +76,60 @@ then
 	exit 1
 fi
 
-#INIT DATA
 echo "== Initialisating data"
 
 HASH_PATH=$(echo "${BACKUP_NAME}" | /usr/bin/openssl sha1 | /usr/bin/awk '{print $2;}')
-FILES=$(/usr/bin/find "${DIRECTORY_TO_BACKUP}" -type f -exec /bin/ls -l --full-time {} \;)
-COUNT_FILES=$(echo "${FILES}" | wc -l)
 
 echo "- Hash path: ${HASH_PATH}"
-echo "- Count files: ${COUNT_FILES}"
 
-#refreshing tmp dir
-echo "== Refreshing temporary directory"
-rm -rf tmp
-mkdir tmp
+echo "== Creating temporary directory"
 
-#preparing files
-echo "== Preparing files"
+TEMPORARY_DIRECTORY=tmp/$(date +"%T" | md5sum | awk '{print $1}')
 
-echo "${FILES}" | while read line
-do
-	file_path=$(echo "${line}" | awk 'BEGIN {ORS=""}; {for(i=9;i<=NF;i++) print $i " "}; {print "\n"};')
-	
-	if [ -n "$file_path" ]
-	then
-		echo "- preparing ${file}"
+mkdir -p ${TEMPORARY_DIRECTORY}
 
-		file_path_md5=$(echo "${file_path}" | md5sum | awk '{print $1;}')
-		file_content_md5=$(md5sum ${file_path} | awk '{print $1;}')
-		file_info_enc=$(echo "${file}" | openssl enc -aes-256-cbc -salt -pbkdf2 -a -kfile password)
+echo "- Temporary directory: ${TEMPORARY_DIRECTORY}"
 
-		echo " - file path: ${file_path}"
-		echo " - file path (md5): ${file_path_md5}"
-		echo " - file content (md5): ${file_content_md5}"
-
-		echo "${file_path_md5}-${file_content_md5}|${file_path}|${line}" >> tmp/files.list
-	fi
-done
-
-#CHECK BACKUP
-echo "== Checking for an existing backup"
-
+echo "== Checking backup"
 EXISTS_BACKUP_DIRECTORY=$(s3cmd ls -c ${S3CMD_CONFIG} s3://${BUCKET_NAME} 2>/dev/null | grep ${HASH_PATH})
-EXISTING_FILES=
 
 if [ -z "${EXISTS_BACKUP_DIRECTORY}" ]
 then
-	echo "- it's the first backup!"
-else
-	echo "== Listing existing files in the backup"
-	s3cmd ls -c ${S3CMD_CONFIG} s3://${BUCKET_NAME}/${HASH_PATH}/ 2>/dev/null > tmp/existing_files.list
-
-	echo "== Deleting older files in the backup"
-	
-	cat tmp/existing_files.list | while read line
-	do
-		#file_path=$(echo "${line}" | awk '{print $NF;}')
-		file_path=$(echo "${line}" | tr " " "\n" | tail -1)
-		#file_name=$(echo "${file_path}" | awk -F "/" '{print $NF;}')
-		file_name=$(echo "${file_path}" | tr "/" "\n" | tail -1)
-		file_exists_in_local=$(cat tmp/files.list | grep "$file_name")
-
-		if [ -z "${file_exists_in_local}" ]
-		then
-			s3cmd rm -c ${S3CMD_CONFIG} ${file_path} 2>/dev/null
-		fi
-	done
+	echo "This backup does not exists."
+	exit 1
 fi
 
-echo "== Uploading new files in the backup"
+echo "== Downloading file list"
+s3cmd get -c ${S3CMD_CONFIG} s3://${BUCKET_NAME}/${HASH_PATH}/files.list.enc "${TEMPORARY_DIRECTORY}" 2>/dev/null
+openssl enc -d -aes-256-cbc -salt -pbkdf2 -a -kfile password -in "${TEMPORARY_DIRECTORY}/files.list.enc" -out "${TEMPORARY_DIRECTORY}/files.list"
 
-cat tmp/files.list | while read line
+echo "== Downloading backup"
+
+cat "${TEMPORARY_DIRECTORY}/files.list" | while read line
 do
+	echo "- downloading file"
+
 	file_name=$(echo "${line}" | cut -d"|" -f1)
-	file_exists_in_s3=$(cat tmp/existing_files.list | grep "${file_name}")
-	if [ -z "${file_exists_in_s3}" ]
-	then
-		file_path=$(echo "${line}" | cut -d"|" -f2)
-		openssl enc -aes-256-cbc -salt -pbkdf2 -a -kfile password -in ${file_path} -out "tmp/${file_name}"
-		s3cmd put -c ${S3CMD_CONFIG} --storage-class GLACIER tmp/${file_name} s3://${BUCKET_NAME}/${HASH_PATH}/${file_name} 2>/dev/null
-		rm tmp/${file_name}
-	fi
+	file_path=$(echo "${line}" | cut -d"|" -f2)
+	path_only=$(echo "${file_path}" | sed "s/\/$(echo "${file_path}" | rev | cut -d"/" -f1 | rev)//g")
+	file_info=$(echo "${line}" | cut -d"|" -f3)
+	file_destination=${RESTORE_TO_DIRECTORY}/${file_path}
+
+	echo " - extracting file at: s3://${BUCKET_NAME}/${HASH_PATH}/${file_name}"
+	echo " - creating path: ${path_only}"
+	echo " - downloading to: ${file_destination}"
+	echo " - using information: ${file_info}"
+
+	mkdir -p ${RESTORE_TO_DIRECTORY}/${path_only}
+
+	s3cmd get -c ${S3CMD_CONFIG} s3://${BUCKET_NAME}/${HASH_PATH}/${file_name} "${TEMPORARY_DIRECTORY}/${file_name}"
+	openssl enc -d -aes-256-cbc -salt -pbkdf2 -a -kfile password -in "${TEMPORARY_DIRECTORY}/${file_name}" -out "${file_destination}"
+
+	#chown "${file_destination}"
+	#chmod "${file_destination}"
 done
 
-#encrypt file.list
-openssl enc -aes-256-cbc -salt -pbkdf2 -a -kfile password -in tmp/files.list -out tmp/files.list.enc
-
-#upload file.list
-s3cmd put -c ${S3CMD_CONFIG} tmp/files.list.enc s3://${BUCKET_NAME}/${HASH_PATH}/files.list.enc 2>/dev/null
+echo "== Removing temporary directory"
+rm -rf ${TEMPORARY_DIRECTORY}
 
 echo "Done!"
